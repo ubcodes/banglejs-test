@@ -1,0 +1,460 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Smartwatch Health Dashboard</title>
+    <style>
+      body {
+        font-family: sans-serif;
+        background: #f4f6f8;
+        padding: 20px;
+      }
+      h1 {
+        color: #333;
+      }
+      #data {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 15px;
+      }
+      .card {
+        background: white;
+        padding: 15px;
+        border-radius: 10px;
+        box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+      }
+      .label {
+        font-weight: bold;
+        color: #555;
+      }
+      .value {
+        font-size: 1.5em;
+        color: #111;
+      }
+      #confirmModal {
+        display: none;
+        background: white;
+        border: 2px solid #ccc;
+        padding: 20px;
+        border-radius: 12px;
+        max-width: 400px;
+        margin: 0 auto;
+        position: fixed;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        z-index: 9999;
+        box-shadow: 0 0 20px rgba(0, 0, 0, 0.2);
+        text-align: center;
+        animation: fadeIn 0.3s ease-in-out;
+      }
+
+      @keyframes fadeIn {
+        from {
+          opacity: 0;
+          transform: translate(-50%, -60%);
+        }
+        to {
+          opacity: 1;
+          transform: translate(-50%, -50%);
+        }
+      }
+
+      #confirmModal button {
+        padding: 8px 16px;
+        margin: 10px;
+        border: none;
+        border-radius: 8px;
+        cursor: pointer;
+        font-weight: bold;
+      }
+
+      #confirmYes {
+        background-color: #4caf50;
+        color: white;
+      }
+
+      #confirmNo {
+        background-color: #f44336;
+        color: white;
+      }
+      #modalOverlay {
+        display: none;
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100vw;
+        height: 100vh;
+        background: rgba(0, 0, 0, 0.4); /* darker dim effect */
+        z-index: 999; /* behind the modal */
+      }
+      body.modal-active #settingsModal,
+      body.modal-active #data {
+        filter: blur(2px);
+      }
+    </style>
+  </head>
+  <body>
+    <h1>💡 Real-Time Health Dashboard</h1>
+    <button onclick="connect()">🔗 Connect to Bangle.js</button>
+    <button onclick="openSettings()">⚙️ Settings</button>
+
+    <div id="status">⏳ Waiting...</div>
+
+    <div
+      id="emergencyBanner"
+      style="
+        display: none;
+        background: red;
+        color: white;
+        font-weight: bold;
+        padding: 10px;
+        border-radius: 8px;
+        margin-bottom: 20px;
+      "
+    >
+      🚨 Emergency Detected: Abnormal health reading!
+    </div>
+
+    <div
+      id="emergencyModal"
+      style="
+        display: none;
+        background: white;
+        border: 2px solid red;
+        padding: 20px;
+        border-radius: 12px;
+        max-width: 400px;
+        margin: 20px auto;
+      "
+    >
+      <h3 style="color: red">🚨 Emergency Alert!</h3>
+      <p>Abnormal health reading detected. Please take action immediately.</p>
+      <button onclick="callCaregiver()">📞 Call Caregiver</button>
+      <button onclick="dismissAlert()">✖️ Dismiss</button>
+    </div>
+
+    <div
+      id="settingsModal"
+      style="
+        display: none;
+        background: white;
+        border: 2px solid #aaa;
+        padding: 20px;
+        border-radius: 12px;
+        max-width: 400px;
+        margin: 20px auto;
+      "
+    >
+      <h3>⚙️ Emergency Contact Settings</h3>
+      <form id="caregiverForm">
+        <input
+          type="text"
+          placeholder="Caregiver Name"
+          id="caregiverName"
+          required
+        />
+        <input
+          type="tel"
+          placeholder="Phone Number"
+          id="caregiverPhone"
+          required
+        />
+        <button type="submit">Add Caregiver</button>
+      </form>
+      <ul id="caregiverList"></ul>
+      <button onclick="closeSettings()">Close</button>
+    </div>
+
+    <div id="modalOverlay"></div>
+
+    <div
+      id="confirmModal"
+      style="
+        display: none;
+        background: white;
+        border: 2px solid #ccc;
+        padding: 20px;
+        border-radius: 12px;
+        max-width: 400px;
+        margin: 20px auto;
+        text-align: center;
+      "
+    >
+      <p id="confirmMessage"></p>
+      <button id="confirmYes" style="margin-right: 10px">✅ Yes</button>
+      <button id="confirmNo">❌ No</button>
+    </div>
+
+    <div id="data">
+      <div class="card">
+        <div class="label">Heart Rate</div>
+        <div class="value" id="hr">--</div>
+      </div>
+      <div class="card">
+        <div class="label">Temperature</div>
+        <div class="value" id="temp">--</div>
+      </div>
+      <div class="card">
+        <div class="label">Pressure</div>
+        <div class="value" id="pressure">--</div>
+      </div>
+      <div class="card">
+        <div class="label">Accel (XYZ)</div>
+        <div class="value" id="accel">--</div>
+      </div>
+      <div class="card">
+        <div class="label">Mag (XYZ)</div>
+        <div class="value" id="mag">--</div>
+      </div>
+    </div>
+
+    <audio id="alertSound" src="alert.wav" preload="auto"></audio>
+
+    <script>
+      let emergencyActive = false;
+
+      let currentCaregiver = 0;
+      let emergencyTimeout;
+
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      const updateUI = (data) => {
+        const alertSound = document.getElementById("alertSound");
+        const emergencyBanner = document.getElementById("emergencyBanner");
+
+        let emergencyTriggered = false;
+
+        // Heart Rate Check
+        const hrElem = document.getElementById("hr");
+        if (typeof data.heartRate === "number" && data.heartRate > 0) {
+          hrElem.textContent = `${data.heartRate} bpm`;
+          if (data.heartRate > 120) {
+            hrElem.parentElement.style.backgroundColor = "#ffcccc";
+            hrElem.parentElement.style.border = "2px solid red";
+            emergencyTriggered = true;
+          } else {
+            hrElem.parentElement.style.backgroundColor = "white";
+            hrElem.parentElement.style.border = "none";
+          }
+        } else {
+          hrElem.textContent = "No data";
+        }
+
+        // Temperature Check
+        const tempElem = document.getElementById("temp");
+        if (typeof data.temp === "number") {
+          tempElem.textContent = `${data.temp.toFixed(1)} °C`;
+          if (data.temp > 38.5) {
+            tempElem.parentElement.style.backgroundColor = "#ffe0b2";
+            tempElem.parentElement.style.border = "2px solid orange";
+            emergencyTriggered = true;
+          } else {
+            tempElem.parentElement.style.backgroundColor = "white";
+            tempElem.parentElement.style.border = "none";
+          }
+        }
+
+        // Pressure
+        const pressureElem = document.getElementById("pressure");
+        if (data.pressure?.pressure) {
+          pressureElem.textContent = `${data.pressure.pressure} Pa`;
+        } else {
+          pressureElem.textContent = "--";
+        }
+
+        // Accelerometer
+        const accel = data.accel ?? {};
+        document.getElementById("accel").textContent = `x: ${accel.x?.toFixed(
+          2
+        )}, y: ${accel.y?.toFixed(2)}, z: ${accel.z?.toFixed(2)}`;
+
+        // Magnetometer
+        const mag = data.mag ?? {};
+        document.getElementById(
+          "mag"
+        ).textContent = `x: ${mag.x}, y: ${mag.y}, z: ${mag.z}`;
+
+        // 🚨 Emergency Display
+        if (emergencyTriggered && !emergencyActive) {
+          emergencyActive = true;
+          emergencyBanner.style.display = "block";
+          if (alertSound && alertSound.paused) {
+            alertSound.play();
+          }
+
+          document.getElementById("emergencyModal").style.display = "block";
+
+          // Auto-call if no user interaction after 10s
+          if (!emergencyTimeout) {
+            emergencyTimeout = setTimeout(callCaregiver, 10000);
+          }
+        }
+
+        // ⚠️ Don't auto-dismiss the emergency alert
+        // if (!emergencyTriggered && emergencyActive) {
+        //   emergencyActive = false;
+        //   emergencyBanner.style.display = "none";
+        //   document.getElementById("emergencyModal").style.display = "none";
+        //   clearTimeout(emergencyTimeout);
+        //   emergencyTimeout = null;
+        //   currentCaregiver = 0;
+        // }
+      };
+
+      function log(msg) {
+        document.getElementById("status").textContent = msg;
+      }
+
+      async function connect() {
+        try {
+          const device = await navigator.bluetooth.requestDevice({
+            filters: [{ namePrefix: "Bangle" }],
+            optionalServices: ["6e400001-b5a3-f393-e0a9-e50e24dcca9e"],
+          });
+
+          const server = await device.gatt.connect();
+          log("✅ Connected to " + device.name);
+
+          const service = await server.getPrimaryService(
+            "6e400001-b5a3-f393-e0a9-e50e24dcca9e"
+          );
+          const characteristic = await service.getCharacteristic(
+            "6e400003-b5a3-f393-e0a9-e50e24dcca9e"
+          );
+
+          await characteristic.startNotifications();
+          log("📡 Receiving live data...");
+
+          characteristic.addEventListener(
+            "characteristicvaluechanged",
+            (event) => {
+              const value = decoder.decode(event.target.value);
+              buffer += value;
+
+              let lines = buffer.split("\n");
+              buffer = lines.pop();
+
+              lines.forEach((line) => {
+                line = line.trim();
+                if (line.startsWith("{") && line.endsWith("}")) {
+                  try {
+                    const json = JSON.parse(line);
+                    updateUI(json);
+                  } catch (e) {
+                    8;
+                    console.warn("JSON parse failed:", line);
+                  }
+                }
+              });
+            }
+          );
+        } catch (err) {
+          log("❌ Error: " + err);
+        }
+      }
+    </script>
+    <script>
+      function callCaregiver() {
+        clearTimeout(emergencyTimeout); // Stop auto-call timer
+
+        if (currentCaregiver < caregivers.length) {
+          const contact = caregivers[currentCaregiver];
+          console.log("Calling:", contact.name);
+          window.location.href = `tel:${contact.phone}`;
+
+          currentCaregiver++;
+          // Try next caregiver in 10 seconds if this fails
+          emergencyTimeout = setTimeout(callCaregiver, 10000);
+        } else {
+          console.log("Calling hospital backup...");
+          window.location.href = "tel:+2348109999999"; // fallback hospital
+        }
+      }
+
+      function dismissAlert() {
+        emergencyActive = false;
+        clearTimeout(emergencyTimeout);
+        emergencyTimeout = null;
+        currentCaregiver = 0;
+
+        document.getElementById("emergencyModal").style.display = "none";
+        document.getElementById("emergencyBanner").style.display = "none";
+      }
+
+      function openSettings() {
+        document.getElementById("settingsModal").style.display = "block";
+        renderCaregivers();
+      }
+
+      function closeSettings() {
+        document.getElementById("settingsModal").style.display = "none";
+      }
+
+      let caregivers = JSON.parse(localStorage.getItem("caregivers")) || [];
+
+      function renderCaregivers() {
+        const list = document.getElementById("caregiverList");
+        list.innerHTML = "";
+        caregivers.forEach((c, index) => {
+          const li = document.createElement("li");
+          li.innerHTML = `
+    ${c.name} - ${c.phone}
+    <button onclick="removeCaregiver(${index})" style="margin-left: 10px;">❌</button>
+  `;
+          list.appendChild(li);
+        });
+      }
+      let pendingDeleteIndex = null;
+
+      function removeCaregiver(index) {
+        pendingDeleteIndex = index;
+        const name = caregivers[index].name;
+        document.getElementById(
+          "confirmMessage"
+        ).textContent = `Are you sure you want to remove ${name}?`;
+        document.getElementById("modalOverlay").style.display = "block";
+        document.getElementById("confirmModal").style.display = "block";
+      }
+
+      document
+        .getElementById("confirmYes")
+        .addEventListener("click", function () {
+          if (pendingDeleteIndex !== null) {
+            caregivers.splice(pendingDeleteIndex, 1);
+            localStorage.setItem("caregivers", JSON.stringify(caregivers));
+            renderCaregivers();
+            pendingDeleteIndex = null;
+          }
+          document.getElementById("confirmModal").style.display = "none";
+          document.getElementById("modalOverlay").style.display = "none";
+        });
+
+      document
+        .getElementById("confirmNo")
+        .addEventListener("click", function () {
+          pendingDeleteIndex = null;
+          document.getElementById("confirmModal").style.display = "none";
+          document.getElementById("modalOverlay").style.display = "none";
+        });
+
+      const form = document.getElementById("caregiverForm");
+      if (form) {
+        form.addEventListener("submit", function (e) {
+          e.preventDefault();
+          const name = document.getElementById("caregiverName").value;
+          const phone = document.getElementById("caregiverPhone").value;
+
+          caregivers.push({ name, phone });
+          localStorage.setItem("caregivers", JSON.stringify(caregivers));
+          renderCaregivers();
+
+          // clear form fields
+          document.getElementById("caregiverName").value = "";
+          document.getElementById("caregiverPhone").value = "";
+        });
+      }
+    </script>
+  </body>
+</html>

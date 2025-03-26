@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Bangle.js Data Test</title>
+  </head>
+  <body>
+    <h2>Bangle.js Sensor Data Test</h2>
+    <button onclick="connect()">Connect to Watch</button>
+    <pre id="output"></pre>
+
+    <script>
+      let output = document.getElementById("output");
+      let buffer = "";
+      const decoder = new TextDecoder();
+
+      function log(msg) {
+        output.textContent += msg + "\n";
+      }
+
+      async function connect() {
+        try {
+          const device = await navigator.bluetooth.requestDevice({
+            filters: [{ namePrefix: "Bangle" }],
+            optionalServices: [
+              "6e400001-b5a3-f393-e0a9-e50e24dcca9e", // Nordic UART Service UUID
+            ],
+          });
+
+          const server = await device.gatt.connect();
+          log("✅ Connected to " + device.name);
+
+          const service = await server.getPrimaryService(
+            "6e400001-b5a3-f393-e0a9-e50e24dcca9e"
+          );
+          const characteristic = await service.getCharacteristic(
+            "6e400003-b5a3-f393-e0a9-e50e24dcca9e"
+          );
+
+          await characteristic.startNotifications();
+
+          characteristic.addEventListener(
+            "characteristicvaluechanged",
+            (event) => {
+              const value = decoder.decode(event.target.value);
+              buffer += value;
+
+              // Split data by line
+              let lines = buffer.split("\n");
+              buffer = lines.pop(); // save remaining for next chunk
+
+              lines.forEach((line) => {
+                line = line.trim();
+                if (line.startsWith("{") && line.endsWith("}")) {
+                  try {
+                    const json = JSON.parse(line);
+                    log(JSON.stringify(json, null, 2));
+                  } catch (e) {
+                    log("❌ Failed to parse JSON: " + line);
+                  }
+                } else {
+                  console.log("⚠️ Ignored non-JSON message:", line);
+                }
+              });
+            }
+          );
+
+          log("🔁 Listening for data...");
+        } catch (err) {
+          log("❌ Error: " + err);
+        }
+      }
+    </script>
+  </body>
+</html>
