@@ -293,14 +293,14 @@
         }
 
         // ⚠️ Don't auto-dismiss the emergency alert
-        // if (!emergencyTriggered && emergencyActive) {
-        //   emergencyActive = false;
-        //   emergencyBanner.style.display = "none";
-        //   document.getElementById("emergencyModal").style.display = "none";
-        //   clearTimeout(emergencyTimeout);
-        //   emergencyTimeout = null;
-        //   currentCaregiver = 0;
-        // }
+        if (!emergencyTriggered && emergencyActive) {
+          emergencyActive = false;
+          emergencyBanner.style.display = "none";
+          document.getElementById("emergencyModal").style.display = "none";
+          clearTimeout(emergencyTimeout);
+          emergencyTimeout = null;
+          currentCaregiver = 0;
+        }
       };
 
       function log(msg) {
@@ -356,32 +356,79 @@
       }
     </script>
     <script>
-      function callCaregiver() {
-        clearTimeout(emergencyTimeout); // Stop auto-call timer
 
-        if (currentCaregiver < caregivers.length) {
-          const contact = caregivers[currentCaregiver];
-          console.log("Calling:", contact.name);
-          window.location.href = `tel:${contact.phone}`;
+// New global flag to prevent repeat voice announcements
+let speechInProgress = false;
 
-          currentCaregiver++;
-          // Try next caregiver in 10 seconds if this fails
-          emergencyTimeout = setTimeout(callCaregiver, 10000);
-        } else {
-          console.log("Calling hospital backup...");
-          window.location.href = "tel:+2348109999999"; // fallback hospital
-        }
-      }
+function callCaregiver() {
+  clearTimeout(emergencyTimeout); // Stop auto-call timer
 
-      function dismissAlert() {
-        emergencyActive = false;
-        clearTimeout(emergencyTimeout);
-        emergencyTimeout = null;
-        currentCaregiver = 0;
+  // Play alert sound before the voice announcement
+  const alertSound = document.getElementById("alertSound");
+  if (alertSound) {
+    alertSound.play();
+  }
 
-        document.getElementById("emergencyModal").style.display = "none";
-        document.getElementById("emergencyBanner").style.display = "none";
-      }
+  // Check if we still have caregivers to call
+  if (currentCaregiver < caregivers.length) {
+    const contact = caregivers[currentCaregiver];
+
+    // Speak out who is being called (prevent repeat announcements)
+    if (!speechInProgress) {
+      speakAlert(`Emergency detected! Calling ${contact.name}`);
+      speechInProgress = true;
+    }
+    console.log("Calling:", contact.name);
+
+    // Auto-trigger the call after 3 seconds
+    setTimeout(() => {
+      window.location.href = `tel:${contact.phone}`;
+    }, 3000);
+
+    currentCaregiver++;
+    emergencyTimeout = setTimeout(callCaregiver, 10000);
+  } else {
+    // If no caregiver answers, fallback to hospital
+    if (!speechInProgress) {
+      speakAlert("No response from caregivers. Calling hospital backup.");
+      speechInProgress = true;
+    }
+    console.log("Calling hospital backup...");
+
+    setTimeout(() => {
+      window.location.href = "tel:+2348109999999"; // fallback hospital
+    }, 3000);
+  }
+}
+
+// Modified speakAlert() to stop ongoing speech if dismissed
+function speakAlert(message) {
+  if ("speechSynthesis" in window) {
+    // Stop any existing speech before starting a new one
+    window.speechSynthesis.cancel();
+    const speech = new SpeechSynthesisUtterance(message);
+    speech.lang = "en-US"; // Set language
+    speech.rate = 1; // Normal speaking speed
+    window.speechSynthesis.speak(speech);
+  } else {
+    console.warn("Web Speech API not supported.");
+  }
+}
+
+
+
+function dismissAlert() {
+  emergencyActive = false;
+  clearTimeout(emergencyTimeout);
+  emergencyTimeout = null;
+  currentCaregiver = 0;
+  speechInProgress = false; // Reset speech flag
+  window.speechSynthesis.cancel(); // Stop any ongoing speech
+
+  document.getElementById("emergencyModal").style.display = "none";
+  document.getElementById("emergencyBanner").style.display = "none";
+}
+
 
       function openSettings() {
         document.getElementById("settingsModal").style.display = "block";
