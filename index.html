@@ -188,7 +188,7 @@
 
     <div id="data">
       <div class="card">
-        <div class="label">Heart Rate</div>
+        <div class="label">Heart</div>
         <div class="value" id="hr">--</div>
       </div>
       <div class="card">
@@ -356,79 +356,170 @@
       }
     </script>
     <script>
+      // New global flag to prevent repeat voice announcements
+      let speechInProgress = false;
 
-// New global flag to prevent repeat voice announcements
-let speechInProgress = false;
+      async function callCaregiver() {
+        clearTimeout(emergencyTimeout); // Stop any previous timer
 
-function callCaregiver() {
-  clearTimeout(emergencyTimeout); // Stop auto-call timer
+        if (currentCaregiver < caregivers.length) {
+          const contact = caregivers[currentCaregiver];
+          console.log("Calling:", contact.name);
 
-  // Play alert sound before the voice announcement
-  const alertSound = document.getElementById("alertSound");
-  if (alertSound) {
-    alertSound.play();
-  }
+          // Send SMS Alert First
+          const smsSuccess = await sendTermiiSMS(contact.name, contact.phone);
 
-  // Check if we still have caregivers to call
-  if (currentCaregiver < caregivers.length) {
-    const contact = caregivers[currentCaregiver];
+          // Make the Call only if SMS is successful
+          if (smsSuccess) {
+            setTimeout(async () => {
+              const callSuccess = await makeTermiiCall(
+                contact.name,
+                contact.phone
+              );
+              if (callSuccess) {
+                currentCaregiver++; // ✅ Increment only if both succeed
+              }
+            }, 3000);
+          }
 
-    // Speak out who is being called (prevent repeat announcements)
-    if (!speechInProgress) {
-      speakAlert(`Emergency detected! Calling ${contact.name}`);
-      speechInProgress = true;
-    }
-    console.log("Calling:", contact.name);
+          // Clear timeout to stop further attempts after handling
+          clearTimeout(emergencyTimeout);
+          emergencyTimeout = null;
+        }
 
-    // Auto-trigger the call after 3 seconds
-    setTimeout(() => {
-      window.location.href = `tel:${contact.phone}`;
-    }, 3000);
+        // Fallback after trying all caregivers
+        if (currentCaregiver >= caregivers.length) {
+          console.log(
+            "No response from caregivers. Calling hospital backup..."
+          );
+          const hospitalSMS = await sendTermiiSMS(
+            "Hospital Backup",
+            "+2348035887389"
+          );
+          const hospitalCall = await makeTermiiCall(
+            "Hospital Backup",
+            "+2349034433727"
+          );
 
-    currentCaregiver++;
-    emergencyTimeout = setTimeout(callCaregiver, 10000);
-  } else {
-    // If no caregiver answers, fallback to hospital
-    if (!speechInProgress) {
-      speakAlert("No response from caregivers. Calling hospital backup.");
-      speechInProgress = true;
-    }
-    console.log("Calling hospital backup...");
+          if (!hospitalSMS || !hospitalCall) {
+            console.error(
+              "🚨 Emergency: Unable to reach backup. Check Termii API."
+            );
+          }
 
-    setTimeout(() => {
-      window.location.href = "tel:+2348109999999"; // fallback hospital
-    }, 3000);
-  }
-}
+          // Clear timeout to stop additional calls
+          clearTimeout(emergencyTimeout);
+          emergencyTimeout = null;
+        }
+      }
 
-// Modified speakAlert() to stop ongoing speech if dismissed
-function speakAlert(message) {
-  if ("speechSynthesis" in window) {
-    // Stop any existing speech before starting a new one
-    window.speechSynthesis.cancel();
-    const speech = new SpeechSynthesisUtterance(message);
-    speech.lang = "en-US"; // Set language
-    speech.rate = 1; // Normal speaking speed
-    window.speechSynthesis.speak(speech);
-  } else {
-    console.warn("Web Speech API not supported.");
-  }
-}
+      // Modified speakAlert() to stop ongoing speech if dismissed
+      function speakAlert(message) {
+        if ("speechSynthesis" in window) {
+          // Stop any existing speech before starting a new one
+          window.speechSynthesis.cancel();
+          const speech = new SpeechSynthesisUtterance(message);
+          speech.lang = "en-US"; // Set language
+          speech.rate = 1; // Normal speaking speed
+          window.speechSynthesis.speak(speech);
+        } else {
+          console.warn("Web Speech API not supported.");
+        }
+      }
 
+      function dismissAlert() {
+        emergencyActive = false;
+        clearTimeout(emergencyTimeout);
+        emergencyTimeout = null;
+        currentCaregiver = 0;
+        speechInProgress = false; // Reset speech flag
+        window.speechSynthesis.cancel(); // Stop any ongoing speech
 
+        document.getElementById("emergencyModal").style.display = "none";
+        document.getElementById("emergencyBanner").style.display = "none";
+      }
 
-function dismissAlert() {
-  emergencyActive = false;
-  clearTimeout(emergencyTimeout);
-  emergencyTimeout = null;
-  currentCaregiver = 0;
-  speechInProgress = false; // Reset speech flag
-  window.speechSynthesis.cancel(); // Stop any ongoing speech
+      //CODE FOR SMS ALERT
+      // Improved SMS Handling
+      async function sendTermiiSMS(contactName, phoneNumber) {
+        const apiKey =
+          "TLgqUGWfpeGAEdbvklVrMqsWXiQKTLqOlQfvKgJgDVSZwOsmKIyJoJXYDSeKiz";
+        const senderName = "SmartWatch";
 
-  document.getElementById("emergencyModal").style.display = "none";
-  document.getElementById("emergencyBanner").style.display = "none";
-}
+        const smsData = {
+          to: phoneNumber,
+          from: senderName,
+          sms: `Emergency Alert! Health abnormality detected. We are calling ${contactName} for assistance.`,
+          type: "plain",
+          channel: "generic",
+        };
 
+        try {
+          const response = await fetch(
+            "https://v3.api.termii.com/api/sms/send",
+            {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({ ...smsData, api_key: apiKey }),
+            }
+          );
+
+          const result = await response.json();
+          if (result.status !== "success") {
+            console.error("Error sending SMS:", result.message);
+            return false;
+          } else {
+            console.log("SMS Sent Successfully:", result);
+            return true;
+          }
+        } catch (error) {
+          console.error("Error sending SMS:", error);
+          return false;
+        }
+      }
+
+      //CODE FOR AUTOMATIC VOICE CALL
+      async function makeTermiiCall(contactName, phoneNumber) {
+        const apiKey =
+          "TLgqUGWfpeGAEdbvklVrMqsWXiQKTLqOlQfvKgJgDVSZwOsmKIyJoJXYDSeKiz"; // Your API key
+
+        const callData = {
+          api_key: apiKey,
+          phone_number: phoneNumber,
+          code: "123456", // Dummy OTP, can be any predefined message
+          message_type: "call",
+        };
+
+        try {
+          const response = await fetch(
+            "https://v3.api.termii.com/api/voice/otp/send",
+            {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify(callData),
+            }
+          );
+
+          const result = await response.json();
+
+          if (result.status === "success") {
+            console.log("✅ Call Triggered Successfully:", result);
+            return true; // Return success for caregiver call
+          } else {
+            console.error("❌ Error making call:", result.message);
+            return false;
+          }
+        } catch (error) {
+          console.error("❌ Error making call:", error);
+          return false;
+        }
+      }
+
+      //CODE FOR SETTINGS
 
       function openSettings() {
         document.getElementById("settingsModal").style.display = "block";
